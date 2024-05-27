@@ -33,6 +33,7 @@ const (
 
 // EventsStreamer reads data from binary logs and streams it on. It acts as a publisher,
 // and interested parties may subscribe for per-table events.
+// EventsStreamer 从二进制日志中读取数据并将其流式传输。
 type EventsStreamer struct {
 	connectionConfig         *mysql.ConnectionConfig
 	db                       *gosql.DB
@@ -57,11 +58,15 @@ func NewEventsStreamer(migrationContext *base.MigrationContext) *EventsStreamer 
 }
 
 // AddListener registers a new listener for binlog events, on a per-table basis
+// AddListener 为 binlog 事件注册一个新的监听器，基于per-table的配置
 func (this *EventsStreamer) AddListener(
 	async bool, databaseName string, tableName string, onDmlEvent func(event *binlog.BinlogDMLEvent) error) (err error) {
+	// 加锁
 	this.listenersMutex.Lock()
+	// 解锁
 	defer this.listenersMutex.Unlock()
 
+	// 数据库名称 和 changelog 名称为空则报错
 	if databaseName == "" {
 		return fmt.Errorf("Empty database name in AddListener")
 	}
@@ -103,13 +108,16 @@ func (this *EventsStreamer) notifyListeners(binlogEvent *binlog.BinlogDMLEvent) 
 }
 
 func (this *EventsStreamer) InitDBConnections() (err error) {
+	// 初始化数据库连接
 	EventsStreamerUri := this.connectionConfig.GetDBUri(this.migrationContext.DatabaseName)
 	if this.db, _, err = mysql.GetDB(this.migrationContext.Uuid, EventsStreamerUri); err != nil {
 		return err
 	}
+	// 验证MySQL连接
 	if _, err := base.ValidateConnection(this.db, this.connectionConfig, this.migrationContext, this.name); err != nil {
 		return err
 	}
+	// 获取binlog的位点
 	if err := this.readCurrentBinlogCoordinates(); err != nil {
 		return err
 	}
@@ -121,6 +129,7 @@ func (this *EventsStreamer) InitDBConnections() (err error) {
 }
 
 // initBinlogReader creates and connects the reader: we hook up to a MySQL server as a replica
+// initBinlogReader 创建并连接读取器：我们伪装成为MySQL服务器的一个从库。
 func (this *EventsStreamer) initBinlogReader(binlogCoordinates *mysql.BinlogCoordinates) error {
 	goMySQLReader := binlog.NewGoMySQLReader(this.migrationContext)
 	if err := goMySQLReader.ConnectBinlogStreamer(*binlogCoordinates); err != nil {

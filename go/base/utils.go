@@ -61,6 +61,7 @@ func StringContainsAll(s string, substrings ...string) bool {
 	return nonEmptyStringsFound
 }
 
+// ValidateConnection 检查MySQL server的版本、端口、extra_port
 func ValidateConnection(db *gosql.DB, connectionConfig *mysql.ConnectionConfig, migrationContext *MigrationContext, name string) (string, error) {
 	versionQuery := `select @@global.version`
 	var port, extraPort int

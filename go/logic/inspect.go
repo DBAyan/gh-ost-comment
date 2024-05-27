@@ -43,19 +43,24 @@ func NewInspector(migrationContext *base.MigrationContext) *Inspector {
 }
 
 func (this *Inspector) InitDBConnections() (err error) {
+	// 获取用作于检查的数据库server的连接url 和 db
 	inspectorUri := this.connectionConfig.GetDBUri(this.migrationContext.DatabaseName)
 	if this.db, _, err = mysql.GetDB(this.migrationContext.Uuid, inspectorUri); err != nil {
 		return err
 	}
 
+	//  获取information_schema的数据库server的连接url 和 db
 	informationSchemaUri := this.connectionConfig.GetDBUri("information_schema")
 	if this.informationSchemaDb, _, err = mysql.GetDB(this.migrationContext.Uuid, informationSchemaUri); err != nil {
 		return err
 	}
 
+	// 检查密码长度，检查版本 端口 extra_port
 	if err := this.validateConnection(); err != nil {
 		return err
 	}
+
+	// 获取hostname 和 port
 	if !this.migrationContext.AliyunRDS && !this.migrationContext.GoogleCloudPlatform && !this.migrationContext.AzureMySQL {
 		if impliedKey, err := mysql.GetInstanceKey(this.db); err != nil {
 			return err
@@ -63,12 +68,18 @@ func (this *Inspector) InitDBConnections() (err error) {
 			this.connectionConfig.ImpliedKey = impliedKey
 		}
 	}
+	// 检查变更用户是否有足够的权限  需要 SUPER|REPLICATION CLIENT, REPLICATION SLAVE and ALL on %s.*
 	if err := this.validateGrants(); err != nil {
 		return err
 	}
+	// 检查binlog的配置 ;binlog 需要开启，格式必须是row格式。gh-ost 可以通过添加参数 --switch-to-rbr 转换binlog的格式为row ，但是这个实例不能有从库
+	// log_bin=on;
+	// binlog_format=ROW;
+	// binlog_row_image=FULL;
 	if err := this.validateBinlogs(); err != nil {
 		return err
 	}
+	//  设置binlog格式为ROW，并重启从库来使用这个配置
 	if err := this.applyBinlogFormat(); err != nil {
 		return err
 	}
@@ -77,15 +88,20 @@ func (this *Inspector) InitDBConnections() (err error) {
 }
 
 func (this *Inspector) ValidateOriginalTable() (err error) {
+	//  确保操作的表确实存在,在这里获取了表的存储引擎 表行数
 	if err := this.validateTable(); err != nil {
 		return err
 	}
+
+	// 确保需要变更的表没有外键存在
 	if err := this.validateTableForeignKeys(this.migrationContext.DiscardForeignKeys); err != nil {
 		return err
 	}
+	// 确保需要变更的表没有Triggers存在
 	if err := this.validateTableTriggers(); err != nil {
 		return err
 	}
+	// 通过执行计划估算表的行数
 	if err := this.estimateTableRowsViaExplain(); err != nil {
 		return err
 	}
@@ -209,6 +225,7 @@ func (this *Inspector) inspectOriginalAndGhostTables() (err error) {
 }
 
 // validateConnection issues a simple can-connect to MySQL
+// validateConnection 简单的MySQL连接测试 检查密码长度，检查版本 端口 extra_port
 func (this *Inspector) validateConnection() error {
 	if len(this.connectionConfig.Password) > mysql.MaxReplicationPasswordLength {
 		return fmt.Errorf("MySQL replication length limited to 32 characters. See https://dev.mysql.com/doc/refman/5.7/en/assigning-passwords.html")
@@ -220,7 +237,7 @@ func (this *Inspector) validateConnection() error {
 }
 
 // validateGrants verifies the user by which we're executing has necessary grants
-// to do its thing.
+// to do its thing. 检查用户是否有足够的权限
 func (this *Inspector) validateGrants() error {
 	query := `show /* gh-ost */ grants for current_user()`
 	foundAll := false
@@ -310,6 +327,7 @@ func (this *Inspector) restartReplication() error {
 
 // applyBinlogFormat sets ROW binlog format and restarts replication to make
 // the replication thread apply it.
+// applyBinlogFormat 设置binlog格式为ROW，并重启从库来使用这个配置
 func (this *Inspector) applyBinlogFormat() error {
 	if this.migrationContext.RequiresBinlogFormatChange() {
 		if !this.migrationContext.SwitchToRowBinlogFormat {
@@ -337,6 +355,10 @@ func (this *Inspector) applyBinlogFormat() error {
 }
 
 // validateBinlogs checks that binary log configuration is good to go
+// validateBinlogs 检查binlog的配置 ;binlog 需要开启，格式必须是row格式。gh-ost 可以通过添加参数 --switch-to-rbr 转换binlog的格式为row ，但是这个实例不能有从库
+// log_bin=on;
+// binlog_format=ROW;
+// binlog_row_image=FULL;
 func (this *Inspector) validateBinlogs() error {
 	query := `select @@global.log_bin, @@global.binlog_format`
 	var hasBinaryLogs bool
@@ -408,6 +430,7 @@ func (this *Inspector) validateLogSlaveUpdates() error {
 }
 
 // validateTable makes sure the table we need to operate on actually exists
+ // validateTable 确保操作的表确实存在,获取了表的存储引擎 表行数
 func (this *Inspector) validateTable() error {
 	query := fmt.Sprintf(`show /* gh-ost */ table status from %s like '%s'`, sql.EscapeName(this.migrationContext.DatabaseName), this.migrationContext.OriginalTableName)
 
@@ -435,6 +458,7 @@ func (this *Inspector) validateTable() error {
 }
 
 // validateTableForeignKeys makes sure no foreign keys exist on the migrated table
+// validateTableForeignKeys 确保需要变更的表没有外键存在
 func (this *Inspector) validateTableForeignKeys(allowChildForeignKeys bool) error {
 	if this.migrationContext.SkipForeignKeyChecks {
 		this.migrationContext.Log.Warning("--skip-foreign-key-checks provided: will not check for foreign keys")
@@ -485,6 +509,7 @@ func (this *Inspector) validateTableForeignKeys(allowChildForeignKeys bool) erro
 }
 
 // validateTableTriggers makes sure no triggers exist on the migrated table
+// validateTableTriggers 确保需要变更的表没有触发器存在
 func (this *Inspector) validateTableTriggers() error {
 	query := `
 		SELECT COUNT(*) AS num_triggers
@@ -513,6 +538,7 @@ func (this *Inspector) validateTableTriggers() error {
 }
 
 // estimateTableRowsViaExplain estimates number of rows on original table
+// estimateTableRowsViaExplain 通过执行计划估算表的行数
 func (this *Inspector) estimateTableRowsViaExplain() error {
 	query := fmt.Sprintf(`explain select /* gh-ost */ * from %s.%s where 1=1`, sql.EscapeName(this.migrationContext.DatabaseName), sql.EscapeName(this.migrationContext.OriginalTableName))
 
@@ -650,6 +676,7 @@ func (this *Inspector) getAutoIncrementValue(tableName string) (autoIncrement ui
 
 // getCandidateUniqueKeys investigates a table and returns the list of unique keys
 // candidate for chunking
+// getCandidateUniqueKeys 检查一个表并返回用于分块的候选唯一键列表
 func (this *Inspector) getCandidateUniqueKeys(tableName string) (uniqueKeys [](*sql.UniqueKey), err error) {
 	query := `
     SELECT

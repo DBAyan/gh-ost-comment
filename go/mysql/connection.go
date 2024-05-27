@@ -21,15 +21,15 @@ const (
 	TLS_CONFIG_KEY = "ghost"
 )
 
-// ConnectionConfig is the minimal configuration required to connect to a MySQL server
+// ConnectionConfig is the minimal configuration required to connect to a MySQL server  该结构体是连接MySQL server的最小配置
 type ConnectionConfig struct {
-	Key                  InstanceKey
-	User                 string
-	Password             string
+	Key                  InstanceKey  // host port
+	User                 string // 用户
+	Password             string // 密码
 	ImpliedKey           *InstanceKey
 	tlsConfig            *tls.Config
-	Timeout              float64
-	TransactionIsolation string
+	Timeout              float64 // 超时时间
+	TransactionIsolation string // 事务隔离级别
 }
 
 func NewConnectionConfig() *ConnectionConfig {
@@ -108,6 +108,7 @@ func (this *ConnectionConfig) TLSConfig() *tls.Config {
 	return this.tlsConfig
 }
 
+// GetDBUri 通过解析配置的结构体 ，返回连接连接MySQL的字符串
 func (this *ConnectionConfig) GetDBUri(databaseName string) string {
 	hostname := this.Key.Hostname
 	var ip = net.ParseIP(hostname)
@@ -132,6 +133,6 @@ func (this *ConnectionConfig) GetDBUri(databaseName string) string {
 		fmt.Sprintf("readTimeout=%fs", this.Timeout),
 		fmt.Sprintf("writeTimeout=%fs", this.Timeout),
 	}
-
+	// 返回连接MySQL的字符串
 	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?%s", this.User, this.Password, hostname, this.Key.Port, databaseName, strings.Join(connectionParams, "&"))
 }

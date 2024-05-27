@@ -66,7 +66,7 @@ const (
 	ForcePrintStatusAndHintRule                 = iota
 )
 
-// Migrator is the main schema migration flow manager.
+// Migrator is the main schema migration flow manager. Migrator是在变更过程中的主要的结构体
 type Migrator struct {
 	appVersion       string
 	parser           *sql.AlterTableParser
@@ -258,10 +258,10 @@ func (this *Migrator) listenOnPanicAbort() {
 	this.migrationContext.Log.Fatale(err)
 }
 
-// validateAlterStatement validates the `alter` statement meets criteria.
-// At this time this means:
-// - column renames are approved
-// - no table rename allowed
+// validateAlterStatement validates the `alter` statement meets criteria. 验证alter语句是否复合条件
+// At this time this means: 这意味着
+// - column renames are approved 重命名字段是被允许的
+// - no table rename allowed 重命名表是不被允许的
 func (this *Migrator) validateAlterStatement() (err error) {
 	if this.parser.IsRenameTable() {
 		return ErrMigratorUnsupportedRenameAlter
@@ -324,6 +324,7 @@ func (this *Migrator) createFlagFiles() (err error) {
 }
 
 // Migrate executes the complete migration logic. This is *the* major gh-ost function.
+// Migrate 执行完整的迁移逻辑。这是gh-ost 主要功能。
 func (this *Migrator) Migrate() (err error) {
 	this.migrationContext.Log.Infof("Migrating %s.%s", sql.EscapeName(this.migrationContext.DatabaseName), sql.EscapeName(this.migrationContext.OriginalTableName))
 	this.migrationContext.StartTime = time.Now()
@@ -336,14 +337,16 @@ func (this *Migrator) Migrate() (err error) {
 	if err := this.hooksExecutor.onStartup(); err != nil {
 		return err
 	}
+	// 解析alter语句
 	if err := this.parser.ParseAlterStatement(this.migrationContext.AlterStatement); err != nil {
 		return err
 	}
+	// 检查alter语句 重命名表不被允许，重命名字段可以
 	if err := this.validateAlterStatement(); err != nil {
 		return err
 	}
 
-	// After this point, we'll need to teardown anything that's been started
+	// After this point, we'll need to teardown anything that's been started 关闭启动的资源 inspector、applier、streamer、throttler
 	//   so we don't leave things hanging around
 	defer this.teardown()
 
@@ -740,26 +743,30 @@ func (this *Migrator) initiateServer() (err error) {
 	return nil
 }
 
-// initiateInspector connects, validates and inspects the "inspector" server.
-// The "inspector" server is typically a replica; it is where we issue some
+// initiateInspector connects, validates and inspects the "inspector" server. initiateInspector连接 验证和检查这个"inspector"服务器（检查服务器）
+// The "inspector" server is typically a replica; it is where we issue some 一般来说 这个"inspector"服务器都是一个从副本，我们在这台服务器上执行一些查询比如 表的总行数 ，库的有效性，心跳检查等
 // queries such as:
 // - table row count
 // - schema validation
 // - heartbeat
-// When `--allow-on-master` is supplied, the inspector is actually the master.
+// When `--allow-on-master` is supplied, the inspector is actually the master. 当参数`--allow-on-master`被指定后，这个inspector 一般是主库
 func (this *Migrator) initiateInspector() (err error) {
 	this.inspector = NewInspector(this.migrationContext)
+	// 初始化连接，同时检查用户密码的长度，用户权限，binlog格式等
 	if err := this.inspector.InitDBConnections(); err != nil {
 		return err
 	}
+	// 检查原始表是否存在 ，是否有外键、触发器，并估算表的行数
 	if err := this.inspector.ValidateOriginalTable(); err != nil {
 		return err
 	}
+	// 检查表 并返回用于分块的候选唯一键列表
 	if err := this.inspector.InspectOriginalTable(); err != nil {
 		return err
 	}
 	// So far so good, table is accessible and valid.
 	// Let's get master connection config
+	// 到目前为止一切顺利，表可访问且有效。就可以去获取主连接配置
 	if this.migrationContext.AssumeMasterHostname == "" {
 		// No forced master host; detect master
 		if this.migrationContext.ApplierConnectionConfig, err = this.inspector.getMasterConnectionConfig(); err != nil {
@@ -1051,8 +1058,11 @@ func (this *Migrator) printStatus(rule PrintStatusRule, writers ...io.Writer) {
 }
 
 // initiateStreaming begins streaming of binary log events and registers listeners for such events
+// initiateStreaming 开启二进制日志事件流式传输并为此类事件注册侦听器
 func (this *Migrator) initiateStreaming() error {
+	//  初始化一个EventsStreamer结构体
 	this.eventsStreamer = NewEventsStreamer(this.migrationContext)
+	// 初始化数据库连接并验证 ，同时记录binlog的位点（坐标）
 	if err := this.eventsStreamer.InitDBConnections(); err != nil {
 		return err
 	}
